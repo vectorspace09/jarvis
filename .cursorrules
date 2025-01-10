@@ -1,0 +1,38 @@
+Don't change the environment variables.
+
+# .cursorrules file for the voice-enabled conversational AI assistant
+
+project_description: |
+  This project develops a voice-enabled AI assistant, inspired by Jarvis from Ironman, that uses STT and TTS for voice interactions. It is powered by OpenAI’s Assistant API for conversational intelligence, and supports tasks like scheduling, reminders, and to-do lists. Supabase is used for data storage, while APScheduler handles task notifications.
+
+rules:
+  - description: Ensure natural language processing and interaction flow
+    apply_when: developing natural language and conversation modules
+    tips:
+      - Use OpenAI's API for conversational intelligence.
+      - Implement contextual memory for personalized interactions.
+  
+  - description: Optimize Speech-to-Text (STT) and Text-to-Speech (TTS) systems
+    apply_when: integrating voice input/output
+    tips:
+      - Ensure high accuracy and low latency in STT/TTS processes.
+      - Fine-tune using user feedback for responsiveness.
+    
+  - description: Efficient data storage and retrieval
+    apply_when: handling user data
+    tips:
+      - Utilize Supabase for scalable and secure data handling.
+      - Implement clear data schemas and indexing for quick access.
+  
+  - description: Task scheduling and notifications
+    apply_when: developing the scheduler system
+    tips:
+      - Use APScheduler for managing tasks and notifications.
+      - Ensure reliability in task execution and notification delivery.
+  
+  - description: User experience and interface design
+    apply_when: creating user interactions
+    tips:
+      - Design intuitive voice commands and responses.
+      - Ensure real-time feedback to enhance user experience.
+      

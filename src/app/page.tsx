@@ -1,4 +1,10 @@
+import { Metadata } from "next"
 import { ChatContainer } from "@/components/chat/chat-container"
+
+export const metadata: Metadata = {
+  title: 'Jarvis - Your AI Assistant',
+  description: 'A voice-enabled AI assistant powered by OpenAI',
+}
 
 export default function Home() {
   return (
@@ -9,4 +15,4 @@ export default function Home() {
       <ChatContainer />
     </main>
   )
-}
+} 
