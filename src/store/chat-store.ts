@@ -3,6 +3,7 @@ import type { Message } from '@/types'
 import { logger } from '@/store/logger-store'
 import { audioQueue } from '@/lib/audio-queue'
 import { detectLanguage } from '@/lib/language-utils'
+import { useVoiceStore } from './voice-store'
 
 interface ChatState {
   messages: Message[]
@@ -115,6 +116,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Then synthesize speech
       try {
         logger.info('Starting speech synthesis')
+        // Get current voice settings
+        const voiceSettings = useVoiceStore.getState()
+        
+        // Synthesize speech with settings
         const speechResponse = await fetch('/api/voice/synthesize', {
           method: 'POST',
           headers: {
@@ -123,8 +128,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
           body: JSON.stringify({ 
             text: data.message.content,
             language: detectedLanguage,
-            voiceType: 'female',  // Default to female voice
-            preset: 'natural'     // Default to natural preset
+            settings: {
+              voice: voiceSettings.voice,
+              style: voiceSettings.style,
+              emotion: voiceSettings.emotion,
+              speed: voiceSettings.speed,
+              volume: voiceSettings.volume,
+              pitch: voiceSettings.pitch,
+              stability: voiceSettings.stability,
+              clarity: voiceSettings.clarity
+            }
           })
         })
 
