@@ -1,18 +1,33 @@
-import { Metadata } from "next"
 import { ChatContainer } from "@/components/chat/chat-container"
+import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
+import { SignOutButton } from "@/components/auth/sign-out-button"
+import Link from "next/link"
 
-export const metadata: Metadata = {
-  title: 'Jarvis - Your AI Assistant',
-  description: 'A voice-enabled AI assistant powered by OpenAI',
-}
+export default async function Home() {
+  const supabase = createServerComponentClient({ cookies })
+  const { data: { session } } = await supabase.auth.getSession()
 
-export default function Home() {
+  if (!session) {
+    redirect('/auth/login')
+  }
+
   return (
     <main className="flex min-h-screen flex-col">
-      <header className="border-b p-4">
-        <h1 className="text-2xl font-bold text-center">Jarvis</h1>
+      <header className="border-b p-4 flex justify-between items-center">
+        <h1 className="text-2xl font-bold">Jarvis</h1>
+        <div className="flex items-center gap-4">
+          <Link 
+            href="/profile"
+            className="text-sm hover:underline"
+          >
+            Profile
+          </Link>
+          <SignOutButton />
+        </div>
       </header>
       <ChatContainer />
     </main>
   )
-} 
+}
