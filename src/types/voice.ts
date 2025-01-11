@@ -19,4 +19,34 @@ export interface VoicePreset {
   name: string
   settings: Partial<VoiceSettings>
   description: string
-} 
+}
+
+export interface VoiceState {
+  isListening: boolean
+  isRecording: boolean
+  isProcessing: boolean
+  isAgentSpeaking: boolean
+  error: string | null
+}
+
+export interface VoiceConfig {
+  silenceThreshold: number
+  silenceTimeout: number
+  minAudioSize: number
+  maxRecordingDuration: number
+  sampleRate: number
+  channels: number
+}
+
+export interface TranscriptionResult {
+  text: string
+  detectedLanguage: string
+  confidence: number
+}
+
+export type VoiceEventType = 
+  | 'stateChange' 
+  | 'message' 
+  | 'error' 
+  | 'audioStart' 
+  | 'audioEnd' 

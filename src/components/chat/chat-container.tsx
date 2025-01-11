@@ -8,6 +8,7 @@ import { motion } from 'framer-motion'
 import type { Message } from '@/types'
 import { VoiceSettings } from '../voice/voice-settings'
 import { AudioProgress } from '../voice/audio-progress'
+import { VoiceErrorBoundary } from '../voice/voice-error-boundary'
 
 export function ChatContainer() {
   const messages = useChatStore((state) => state.messages)
@@ -58,7 +59,9 @@ export function ChatContainer() {
       <div className="p-4 border-t">
         <div className="flex justify-center items-center gap-4">
           <VoiceSettings />
-          <VoiceRecorder />
+          <VoiceErrorBoundary>
+            <VoiceRecorder />
+          </VoiceErrorBoundary>
         </div>
       </div>
       

@@ -1,72 +1,73 @@
+import { EventEmitter } from 'events'
+import type { AudioQueueState, Unsubscribe } from '@/types/audio'
 import { logger } from '@/store/logger-store'
 
-type QueueState = {
-  isPlaying: boolean
-  progress: number
-}
-
-type Subscriber = (state: QueueState) => void
-
-class AudioQueue {
-  private queue: Array<{ url: string, text: string }> = []
-  private isPlaying: boolean = false
+class AudioQueue extends EventEmitter {
+  private state: AudioQueueState = {
+    isPlaying: false,
+    progress: 0
+  }
   private currentAudio: HTMLAudioElement | null = null
-  private subscribers: Set<Subscriber> = new Set()
+  private queue: Array<{ url: string, text: string }> = []
 
-  async add(text: string, audioBlob: Blob) {
-    const url = URL.createObjectURL(audioBlob)
-    this.queue.push({ url, text })
-    logger.info('Added to audio queue:', { text })
+  subscribe(callback: (state: AudioQueueState) => void): Unsubscribe {
+    const handler = () => callback(this.state)
+    this.on('stateChange', handler)
+    handler() // Initial state
+    return () => this.off('stateChange', handler)
+  }
+
+  private setState(updates: Partial<AudioQueueState>) {
+    this.state = { ...this.state, ...updates }
+    this.emit('stateChange', this.state)
+  }
+
+  private async playWithRetry(audio: HTMLAudioElement, retries = 2): Promise<void> {
+    try {
+      await audio.play()
+    } catch (error: unknown) {
+      if (retries > 0 && error instanceof Error && error.name === 'NotAllowedError') {
+        // Wait and retry for user interaction errors
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        return this.playWithRetry(audio, retries - 1)
+      }
+      throw error
+    }
+  }
+
+  async enqueue(text: string, audioUrl: string) {
+    this.queue.push({ url: audioUrl, text })
+    logger.info('Audio queued', { text })
     
-    if (!this.isPlaying) {
+    if (!this.state.isPlaying) {
       this.playNext()
     }
   }
 
-  subscribe(callback: Subscriber) {
-    this.subscribers.add(callback)
-    return () => this.subscribers.delete(callback)
-  }
-
-  private notify() {
-    const state: QueueState = {
-      isPlaying: this.isPlaying,
-      progress: this.currentAudio?.currentTime 
-        ? (this.currentAudio.currentTime / this.currentAudio.duration) * 100
-        : 0
-    }
-    this.subscribers.forEach(cb => cb(state))
-  }
-
   private async playNext() {
-    if (this.queue.length === 0) {
-      this.isPlaying = false
-      return
-    }
+    if (this.state.isPlaying || this.queue.length === 0) return
 
-    this.isPlaying = true
     const { url, text } = this.queue.shift()!
+    this.currentAudio = new Audio(url)
 
     try {
-      this.currentAudio = new Audio(url)
-      
-      this.currentAudio.ontimeupdate = () => this.notify()
-      this.currentAudio.onended = () => {
-        URL.revokeObjectURL(url)
-        this.notify()
-        this.playNext()
-      }
+      this.currentAudio.addEventListener('play', () => {
+        this.setState({ isPlaying: true, progress: 0 })
+        logger.info('Audio playback started', { text })
+      })
 
-      this.currentAudio.onerror = (error) => {
-        logger.error('Audio playback error:', error)
+      this.currentAudio.addEventListener('ended', () => {
+        this.setState({ isPlaying: false, progress: 100 })
         URL.revokeObjectURL(url)
+        this.currentAudio = null
         this.playNext()
-      }
+      })
 
-      logger.info('Playing audio:', { text })
-      await this.currentAudio.play()
+      await this.playWithRetry(this.currentAudio)
     } catch (error) {
-      logger.error('Failed to play audio:', error)
+      logger.error('Audio playback error:', error)
+      this.setState({ isPlaying: false, progress: 0 })
+      this.currentAudio = null
       this.playNext()
     }
   }
@@ -78,7 +79,7 @@ class AudioQueue {
     }
     this.queue.forEach(({ url }) => URL.revokeObjectURL(url))
     this.queue = []
-    this.isPlaying = false
+    this.setState({ isPlaying: false, progress: 0 })
   }
 }
 

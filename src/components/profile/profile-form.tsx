@@ -6,23 +6,35 @@ import { Button } from '../ui/button'
 import { useRouter } from 'next/navigation'
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { toast } from 'react-hot-toast'
+import { useTheme } from '@/hooks/use-theme'
+import { Switch } from '../ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 
+interface UserPreferences {
+  theme: 'system' | 'light' | 'dark'
+  notifications: boolean
+  language: string
+}
+
 interface ProfileFormProps {
   user: User
-  profile: any
+  profile: {
+    name?: string
+    preferences?: UserPreferences
+  }
 }
 
 export function ProfileForm({ user, profile }: ProfileFormProps) {
   const router = useRouter()
   const supabase = createClientComponentClient()
+  const { setTheme } = useTheme()
   const [isLoading, setIsLoading] = useState(false)
   const [name, setName] = useState(profile?.name || '')
-  const [preferences, setPreferences] = useState(profile?.preferences || {
+  const [preferences, setPreferences] = useState<UserPreferences>(profile?.preferences || {
     theme: 'system',
     notifications: true,
     language: 'en',
@@ -44,6 +56,9 @@ export function ProfileForm({ user, profile }: ProfileFormProps) {
         })
 
       if (error) throw error
+
+      setTheme(preferences.theme)
+      
       toast.success('Profile updated!')
       router.refresh()
     } catch (error) {
@@ -52,6 +67,26 @@ export function ProfileForm({ user, profile }: ProfileFormProps) {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const handleThemeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newTheme = e.target.value as UserPreferences['theme']
+    setPreferences((prev: UserPreferences) => ({ ...prev, theme: newTheme }))
+    setTheme(newTheme)
+  }
+
+  const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setPreferences((prev: UserPreferences) => ({ 
+      ...prev, 
+      language: e.target.value 
+    }))
+  }
+
+  const handleNotificationChange = (checked: boolean) => {
+    setPreferences((prev: UserPreferences) => ({ 
+      ...prev, 
+      notifications: checked 
+    }))
   }
 
   return (
@@ -126,13 +161,13 @@ export function ProfileForm({ user, profile }: ProfileFormProps) {
                 Customize your app experience.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label>Theme</Label>
                 <select
-                  className="w-full p-2 border rounded-md"
+                  className="w-full p-2 border rounded-md bg-background"
                   value={preferences.theme}
-                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setPreferences({ ...preferences, theme: e.target.value })}
+                  onChange={handleThemeChange}
                 >
                   <option value="system">System</option>
                   <option value="light">Light</option>
@@ -143,17 +178,35 @@ export function ProfileForm({ user, profile }: ProfileFormProps) {
               <div className="space-y-2">
                 <Label>Language</Label>
                 <select
-                  className="w-full p-2 border rounded-md"
+                  className="w-full p-2 border rounded-md bg-background"
                   value={preferences.language}
-                  onChange={(e) => setPreferences({ ...preferences, language: e.target.value })}
+                  onChange={handleLanguageChange}
                 >
                   <option value="en">English</option>
                   <option value="es">Spanish</option>
                   <option value="fr">French</option>
+                  <option value="de">German</option>
                 </select>
               </div>
 
-              <Button onClick={updateProfile} disabled={isLoading}>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Notifications</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Receive notifications about updates and reminders
+                  </p>
+                </div>
+                <Switch
+                  checked={preferences.notifications}
+                  onCheckedChange={handleNotificationChange}
+                />
+              </div>
+
+              <Button 
+                onClick={updateProfile} 
+                disabled={isLoading}
+                className="w-full"
+              >
                 {isLoading ? 'Saving...' : 'Save Preferences'}
               </Button>
             </CardContent>

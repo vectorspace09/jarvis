@@ -6,7 +6,7 @@ Jarvis Development Todo List
 [x] Implement protected routes
 [x] Add loading states for auth
 [x] Google OAuth integration
-[ ] User profile page
+[x] User profile page
 [x] Settings persistence
 [x] Session management
 [x] Auth error handling
