@@ -6,6 +6,7 @@ export class VoiceActivityDetector {
   private analyzer: AnalyserNode | null = null
   private mediaStream: MediaStream | null = null
   private isListening = false
+  private active = true
   private config: VoiceConfig
   private onSpeechStart: (() => void) | null = null
   private onSpeechEnd: (() => void) | null = null
@@ -129,5 +130,25 @@ export class VoiceActivityDetector {
     this.analyzer = null
     this.speakingHistory = []
     this.lastAnalysisTime = 0
+  }
+
+  pause() {
+    this.active = false
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(track => track.enabled = false)
+    }
+  }
+
+  resume() {
+    this.active = true
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(track => track.enabled = true)
+    }
+  }
+
+  onAudioProcess(event: AudioProcessingEvent) {
+    if (!this.active) return; // Skip processing if paused
+    
+    // Rest of the audio processing code...
   }
 } 

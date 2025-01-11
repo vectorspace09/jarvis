@@ -4,7 +4,18 @@ import type { VoiceSettings, VoiceType, VoiceStyle, VoiceEmotion, VoiceSpeed } f
 import { VOICE_PRESETS } from '@/lib/voice-presets'
 import { logger } from '@/store/logger-store'
 
-interface VoiceState extends VoiceSettings {
+// Base voice state without methods
+interface VoiceStateBase extends VoiceSettings {
+  isListening: boolean
+  isRecording: boolean
+  isProcessing: boolean
+  isAgentSpeaking: boolean
+  error: string | null
+  activePreset: string | null
+}
+
+// Store state with methods
+interface VoiceStoreState extends VoiceStateBase {
   setVoice: (voice: VoiceType) => void
   setStyle: (style: VoiceStyle) => void
   setEmotion: (emotion: VoiceEmotion) => void
@@ -16,10 +27,10 @@ interface VoiceState extends VoiceSettings {
   toggleMute: () => void
   applyPreset: (presetName: string) => void
   resetToDefault: () => void
-  activePreset: string | null
 }
 
-const defaultSettings: VoiceSettings & { activePreset: string | null } = {
+const defaultSettings: VoiceStateBase = {
+  // Voice settings
   voice: 'male',
   style: 'natural',
   emotion: 'neutral',
@@ -29,10 +40,16 @@ const defaultSettings: VoiceSettings & { activePreset: string | null } = {
   stability: 0.7,
   clarity: 0.8,
   isMuted: false,
+  // Voice state
+  isListening: false,
+  isRecording: false,
+  isProcessing: false,
+  isAgentSpeaking: false,
+  error: null,
   activePreset: null
 }
 
-export const useVoiceStore = create<VoiceState>()(
+export const useVoiceStore = create<VoiceStoreState>()(
   persist(
     (set) => ({
       ...defaultSettings,

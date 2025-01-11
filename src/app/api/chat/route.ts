@@ -12,28 +12,37 @@ export async function POST(request: Request) {
   try {
     logger.info('Chat request received')
     const { messages, language } = await request.json()
-    const lastMessage = messages[messages.length - 1]
     
-    // Use the detected language from the last message
-    const detectedLanguage = lastMessage.language || 'en'
+    // Get conversation context from previous messages
+    const conversationContext = messages.slice(-3) // Last 3 messages for context
     
-    logger.info('Processing messages:', { messages, detectedLanguage })
+    const systemPrompt = {
+      role: 'system',
+      content: `You are Jarvis, a friendly and intelligent AI assistant. Keep these guidelines in mind:
+- Be conversational and natural, like a helpful friend
+- Keep responses concise and direct
+- Maintain context from previous messages
+- If you don't understand something, ask for clarification naturally
+- Match the user's tone and energy level
+- Respond in ${SUPPORTED_LANGUAGES[language as LanguageCode] || 'English'}
+- Don't say "feel free to ask" repeatedly
+- Don't mention being an AI unless relevant
+- Remember previous context in the conversation`
+    }
 
     const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4-turbo-preview", // Using GPT-4 for better conversation
       messages: [
-        { 
-          role: 'system', 
-          content: `You are Jarvis, an AI assistant. Respond in ${SUPPORTED_LANGUAGES[detectedLanguage as LanguageCode]}. Keep responses natural and conversational.` 
-        },
-        ...messages.map((msg: Message) => ({
+        systemPrompt,
+        ...conversationContext.map((msg: Message) => ({
           role: msg.role,
           content: msg.content
         }))
       ],
       temperature: 0.7,
       max_tokens: 150,
-      stream: false
+      presence_penalty: 0.6, // Encourage more varied responses
+      frequency_penalty: 0.5 // Discourage repetitive phrases
     })
 
     const reply = response.choices[0].message
@@ -41,7 +50,7 @@ export async function POST(request: Request) {
     const responseMessage = {
       role: 'assistant',
       content: reply.content,
-      language: detectedLanguage,
+      language: language,
       timestamp: new Date().toISOString()
     }
 

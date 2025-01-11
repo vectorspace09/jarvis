@@ -4,6 +4,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import SupabaseProvider from "@/providers/supabase-provider";
 import "./globals.css";
 import { Logger } from "@/components/debug/logger";
+import { DebugPanel } from "@/components/debug/debug-panel";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -32,6 +33,7 @@ export default function RootLayout({
           >
             {children}
             <Logger />
+            {process.env.NODE_ENV === 'development' && <DebugPanel />}
           </ThemeProvider>
         </SupabaseProvider>
       </body>

@@ -4,9 +4,15 @@ import { logger } from '@/store/logger-store'
 import { audioQueue } from '@/lib/audio-queue'
 import { detectLanguage } from '@/lib/language-utils'
 import { useVoiceStore } from './voice-store'
+import { ConversationManager } from '@/lib/voice/conversation-manager'
 
 interface ChatState {
   messages: Message[]
+  context: {
+    lastTopic?: string
+    userPreferences?: Record<string, any>
+    conversationHistory?: string[]
+  }
   isProcessing: boolean
   currentConversationId: string | null
   addMessage: (message: Message) => void
@@ -21,11 +27,31 @@ interface ChatState {
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
+  context: {},
   isProcessing: false,
   currentConversationId: null,
-  addMessage: (message) => 
-    set((state) => ({ messages: [...state.messages, message] })),
+  addMessage: (message) => {
+    set(state => {
+      const newMessages = [...state.messages, message]
+      
+      // Update context based on message content
+      const context = {
+        ...state.context,
+        lastTopic: message.content,
+        conversationHistory: newMessages
+          .slice(-5)
+          .map(m => m.content)
+      }
+      
+      return { 
+        messages: newMessages,
+        context
+      }
+    })
+  },
   processMessage: async (message, speak = true) => {
+    const conversationManager = ConversationManager.getInstance()
+    
     set((state) => ({ 
       messages: [...state.messages, message],
       isProcessing: true 
@@ -38,7 +64,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          messages: [...get().messages, message]
+          messages: [...get().messages, message],
+          language: message.language || 'en'
         }),
       })
 
@@ -50,24 +77,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isProcessing: false
       }))
 
-      // Speak the response if enabled
+      // Use conversation manager to handle speech
       if (speak) {
-        const speechResponse = await fetch('/api/voice/synthesize', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ text: reply.content }),
-        })
-
-        if (speechResponse.ok) {
-          const audioBlob = await speechResponse.blob()
-          const audio = new Audio(URL.createObjectURL(audioBlob))
-          await audio.play()
-        }
+        await conversationManager.processResponse(reply.content)
       }
     } catch (error) {
-      console.error('Error processing message:', error)
+      logger.error('Error processing message:', error)
       set({ isProcessing: false })
     }
   },

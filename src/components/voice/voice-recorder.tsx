@@ -14,6 +14,7 @@ export function VoiceRecorder() {
   const [isListening, setIsListening] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
   const setProcessing = useChatStore(state => state.setProcessing)
   const processMessageStream = useChatStore(state => state.processMessageStream)
   
@@ -46,20 +47,21 @@ export function VoiceRecorder() {
       }
     }
 
-    const handleError = (error: Error) => {
-      toast.error('Voice processing error')
-      logger.error('Voice error:', error)
-    }
+    const handleError = (error: { message: string; error: any }) => {
+      setError(new Error(error.message));
+    };
 
     manager.on('stateChange', handleStateChange)
     manager.on('message', handleMessage)
     manager.on('error', handleError)
 
     return () => {
-      manager.removeListener('stateChange', handleStateChange)
-      manager.removeListener('message', handleMessage)
-      manager.removeListener('error', handleError)
-      manager.endConversation()
+      if (manager) {
+        manager.removeListener('stateChange', handleStateChange)
+        manager.removeListener('message', handleMessage)
+        manager.removeListener('error', handleError)
+        manager.endConversation()
+      }
     }
   }, [])
 

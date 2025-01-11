@@ -21,12 +21,13 @@ export interface VoicePreset {
   description: string
 }
 
-export interface VoiceState {
+export interface VoiceState extends VoiceSettings {
   isListening: boolean
   isRecording: boolean
   isProcessing: boolean
   isAgentSpeaking: boolean
   error: string | null
+  activePreset: string | null
 }
 
 export interface VoiceConfig {

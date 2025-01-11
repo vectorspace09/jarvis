@@ -4,6 +4,8 @@ import { VoiceProcessor } from './voice-processor'
 import { VoiceActivityDetector } from './vad-service'
 import { audioQueue } from '@/lib/audio-queue'
 import { logger } from '@/store/logger-store'
+import { SpeechValidator } from './speech-validator'
+import { SpeechMetrics } from '@/lib/analytics/speech-metrics'
 
 const DEFAULT_CONFIG: VoiceConfig = {
   silenceThreshold: 0.1,
@@ -14,7 +16,26 @@ const DEFAULT_CONFIG: VoiceConfig = {
   channels: 1
 }
 
-export class ConversationManager extends EventEmitter {
+// Add proper event type definitions
+interface ConversationEvents {
+  stateChange: (state: VoiceState) => void;
+  message: (result: TranscriptionResult) => void;
+  error: (error: { message: string; error: any }) => void;
+}
+
+// Move interface declaration before the class
+export interface ConversationManager {
+  on<K extends keyof ConversationEvents>(event: K, listener: ConversationEvents[K]): this;
+  emit<K extends keyof ConversationEvents>(event: K, ...args: Parameters<ConversationEvents[K]>): boolean;
+  removeListener<K extends keyof ConversationEvents>(event: K, listener: ConversationEvents[K]): this;
+  startConversation(): void;
+  endConversation(): void;
+  interruptAgent(): void;
+  processResponse(text: string): Promise<void>;
+}
+
+// Update class declaration
+export class ConversationManager extends EventEmitter implements ConversationManager {
   private static instance: ConversationManager
   private state: VoiceState
   private config: VoiceConfig
@@ -24,17 +45,33 @@ export class ConversationManager extends EventEmitter {
   private audioChunks: Blob[] = []
   private timeouts: Map<string, NodeJS.Timeout> = new Map()
   private wasInterrupted: boolean = false
+  private static readonly DEBOUNCE_TIME = 500; // ms
+  private lastProcessingTime = 0;
+  private metrics: SpeechMetrics;
 
   private constructor(config: Partial<VoiceConfig> = {}) {
     super()
     this.config = { ...DEFAULT_CONFIG, ...config }
     this.processor = VoiceProcessor.getInstance()
+    this.metrics = SpeechMetrics.getInstance()
     this.state = {
+      // Voice settings
+      voice: 'male',
+      style: 'natural',
+      emotion: 'neutral',
+      speed: 'normal',
+      volume: 100,
+      pitch: 1.0,
+      stability: 0.7,
+      clarity: 0.8,
+      isMuted: false,
+      // State properties
       isListening: false,
       isRecording: false,
       isProcessing: false,
       isAgentSpeaking: false,
-      error: null
+      error: null,
+      activePreset: null
     }
 
     // Improved audio queue subscription
@@ -225,34 +262,65 @@ export class ConversationManager extends EventEmitter {
   }
 
   private async processAudio(audioBlob: Blob) {
-    // Increase minimum audio size to avoid processing noise
-    if (audioBlob.size < this.config.minAudioSize) {
-      logger.info('Audio too short, skipping', { size: audioBlob.size })
-      if (this.state.isListening) {
-        this.resumeListening()
-      }
-      return
+    const now = Date.now();
+    if (now - this.lastProcessingTime < ConversationManager.DEBOUNCE_TIME) {
+      return;
     }
-
-    this.updateState({ isProcessing: true })
+    this.lastProcessingTime = now;
 
     try {
-      const result = await this.processor.processAudio(audioBlob)
+      // Validate speech and track metrics
+      const validation = await SpeechValidator.validateAudio(audioBlob);
+      this.metrics.trackAttempt(validation);
       
-      // Only process if we have meaningful text
-      if (result.text?.trim()) {
-        this.emit('message', result)
-      } else {
-        logger.info('Empty result, resuming listening')
-        if (this.state.isListening) {
-          this.resumeListening()
-        }
+      if (!validation.isValid) {
+        logger.info('Invalid speech detected', {
+          ...validation,
+          metrics: this.metrics.getReport()
+        });
+        return;
       }
+
+      this.updateState({ isProcessing: true });
+      
+      const result = await this.processor.processAudio(audioBlob);
+      
+      if (!this.validateTranscription(result.text)) {
+        this.metrics.trackAttempt({ isValid: false, confidence: 0 });
+        logger.info('Invalid transcription detected', { 
+          text: result.text,
+          metrics: this.metrics.getReport()
+        });
+        return;
+      }
+
+      this.emit('message', result);
+      
     } catch (error) {
-      this.handleError('Processing error', error)
+      this.metrics.trackAttempt({ isValid: false, confidence: 0 });
+      this.handleError('Processing error', error);
     } finally {
-      this.updateState({ isProcessing: false })
+      this.updateState({ isProcessing: false });
     }
+  }
+
+  private validateTranscription(text: string): boolean {
+    // Basic transcription validation
+    const normalized = text.trim().toLowerCase();
+    
+    // Filter out common false positives
+    const invalidPhrases = [
+      'thank you for watching',
+      'thanks for watching',
+      'subscribe'
+    ];
+    
+    if (invalidPhrases.includes(normalized)) {
+      return false;
+    }
+
+    // Ensure minimum content
+    return normalized.length >= 2 && normalized.split(' ').length >= 1;
   }
 
   private handleError(message: string, error: any) {
@@ -303,6 +371,78 @@ export class ConversationManager extends EventEmitter {
           this.resumeListening()
         }
       }, 500)
+    }
+  }
+
+  private async processAudioChunks() {
+    if (this.audioChunks.length === 0) return
+
+    const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' })
+    this.audioChunks = [] // Clear chunks after processing
+    
+    await this.processAudio(audioBlob)
+  }
+
+  private async handleSilence() {
+    // Wait longer before processing short utterances
+    if (this.audioChunks.length > 0) {
+      const totalSize = this.audioChunks.reduce((sum, chunk) => sum + chunk.size, 0)
+      
+      // Ignore very short audio (likely background noise)
+      if (totalSize < this.config.minAudioSize) {
+        logger.info('Audio too short, waiting for more input')
+        return
+      }
+      
+      // Add a small delay before processing to catch complete phrases
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      await this.processAudioChunks()
+    }
+  }
+
+  private async startSpeaking() {
+    this.updateState({ isAgentSpeaking: true })
+    // Pause listening while speaking to prevent feedback
+    if (this.vad) {
+      this.vad.pause()
+    }
+  }
+
+  private async stopSpeaking() {
+    this.updateState({ isAgentSpeaking: false })
+    // Resume listening after a short delay
+    setTimeout(() => {
+      if (this.state.isListening && this.vad) {
+        this.vad.resume()
+      }
+    }, 500) // Half second delay to ensure speech has stopped
+  }
+
+  async processResponse(text: string) {
+    try {
+      await this.startSpeaking()
+      // Process and play the response
+      const response = await fetch('/api/voice/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      })
+
+      if (response.ok) {
+        const audioBlob = await response.blob()
+        const audio = new Audio(URL.createObjectURL(audioBlob))
+        
+        // Wait for audio to finish before resuming listening
+        audio.onended = () => {
+          this.stopSpeaking()
+        }
+        
+        await audio.play()
+      }
+    } catch (error) {
+      this.handleError('Speech synthesis error', error)
+      this.stopSpeaking()
     }
   }
 } 

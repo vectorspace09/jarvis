@@ -11,28 +11,28 @@ interface Props {
 
 interface State {
   hasError: boolean
+  error: Error | null
 }
 
 export class VoiceErrorBoundary extends Component<Props, State> {
-  public state: State = {
-    hasError: false
+  constructor(props: Props) {
+    super(props)
+    this.state = { hasError: false, error: null }
   }
 
-  public static getDerivedStateFromError(_: Error): State {
-    return { hasError: true }
+  public static getDerivedStateFromError(error: Error): State {
+    return { 
+      hasError: true,
+      error: error
+    }
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    logger.error('Voice system error:', {
-      error: error.message,
-      stack: errorInfo.componentStack
-    })
-    
-    // Attempt recovery
-    const manager = ConversationManager.getInstance()
-    manager.endConversation()
-    
-    toast.error('Voice system encountered an error. Click to retry.')
+  public componentDidCatch(error: Error) {
+    this.setState({ hasError: true, error })
+    const conversation = ConversationManager.getInstance()
+    if (conversation) {
+      conversation.endConversation()
+    }
   }
 
   private handleRetry = () => {
