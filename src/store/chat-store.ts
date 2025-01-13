@@ -20,7 +20,7 @@ interface ChatState {
   setProcessing: (processing: boolean) => void
   setConversationId: (id: string) => void
   reset: () => void
-  processMessageStream: (message: Message) => Promise<void>
+  processMessageStream: (message: Message) => Promise<Message | null>
   currentLanguage: string
   setLanguage: (language: string) => void
 }
@@ -31,21 +31,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isProcessing: false,
   currentConversationId: null,
   addMessage: (message) => {
+    logger.info('ChatStore - Before adding message:', {
+      message,
+      currentMessages: get().messages
+    })
+    
     set(state => {
       const newMessages = [...state.messages, message]
-      
-      // Update context based on message content
-      const context = {
-        ...state.context,
-        lastTopic: message.content,
-        conversationHistory: newMessages
-          .slice(-5)
-          .map(m => m.content)
-      }
+      logger.info('ChatStore - After adding message:', {
+        newMessages,
+        messageCount: newMessages.length
+      })
       
       return { 
         messages: newMessages,
-        context
+        context: {
+          ...state.context,
+          lastTopic: message.content,
+          conversationHistory: newMessages.slice(-5).map(m => m.content)
+        }
       }
     })
   },
@@ -89,7 +93,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setProcessing: (processing) => set({ isProcessing: processing }),
   setConversationId: (id) => set({ currentConversationId: id }),
   reset: () => set({ messages: [], currentConversationId: null }),
-  processMessageStream: async (message) => {
+  processMessageStream: async (message): Promise<Message | null> => {
     // Detect language from the message content
     const detectedLanguage = detectLanguage(message.content)
     message.language = detectedLanguage // Set the detected language
@@ -131,10 +135,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Then synthesize speech
       try {
         logger.info('Starting speech synthesis')
-        // Get current voice settings
         const voiceSettings = useVoiceStore.getState()
         
-        // Synthesize speech with settings
         const speechResponse = await fetch('/api/voice/synthesize', {
           method: 'POST',
           headers: {
@@ -169,9 +171,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         logger.error('Speech synthesis error:', speechError)
       }
 
+      // Return the assistant's message
+      return data.message
+
     } catch (error) {
       logger.error('Error processing message:', error)
       set({ isProcessing: false })
+      return null
     }
   },
   currentLanguage: 'en',

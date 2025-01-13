@@ -16,13 +16,27 @@ export class VoiceActivityDetector {
   private readonly HISTORY_SIZE = 3
   private lastAnalysisTime = 0
   private readonly ANALYSIS_INTERVAL = 25 // ms between analyses
+  private isProcessing = false
 
   constructor(config: VoiceConfig) {
     this.config = config
   }
 
+  private static checkBrowserSupport() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Audio input not supported');
+    }
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) {
+      throw new Error('AudioContext not supported');
+    }
+  }
+
   async init() {
     try {
+      VoiceActivityDetector.checkBrowserSupport();
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      
       this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -33,7 +47,7 @@ export class VoiceActivityDetector {
         } 
       })
 
-      this.audioContext = new AudioContext({ sampleRate: this.config.sampleRate })
+      this.audioContext = new AudioContextClass({ sampleRate: this.config.sampleRate })
       const source = this.audioContext.createMediaStreamSource(this.mediaStream)
       this.analyzer = this.audioContext.createAnalyser()
       this.analyzer.fftSize = 512
@@ -49,8 +63,18 @@ export class VoiceActivityDetector {
     }
   }
 
-  private monitor() {
-    if (!this.isListening || !this.analyzer) return
+  private async monitor() {
+    if (!this.isListening || !this.analyzer || !this.audioContext) return;
+    
+    // Ensure audio context is running
+    if (this.audioContext.state === 'suspended') {
+      try {
+        await this.audioContext.resume();
+      } catch (error) {
+        logger.error('Failed to resume audio context:', error);
+        return;
+      }
+    }
 
     const now = Date.now()
     if (now - this.lastAnalysisTime < this.ANALYSIS_INTERVAL) {
@@ -99,14 +123,19 @@ export class VoiceActivityDetector {
   }
 
   start(onSpeechStart: () => void, onSpeechEnd: () => void) {
-    if (!this.analyzer) throw new Error('VAD not initialized')
+    if (!this.analyzer) throw new Error('VAD not initialized');
     
-    this.onSpeechStart = onSpeechStart
-    this.onSpeechEnd = onSpeechEnd
-    this.isListening = true
-    this.speakingHistory = []
-    this.lastAnalysisTime = 0
-    this.monitor()
+    this.onSpeechStart = () => {
+      // Only trigger speech start if we're not already processing
+      if (!this.isProcessing) {
+        onSpeechStart();
+      }
+    };
+    this.onSpeechEnd = onSpeechEnd;
+    this.isListening = true;
+    this.speakingHistory = [];
+    this.lastAnalysisTime = 0;
+    this.monitor();
   }
 
   stop() {
@@ -150,5 +179,9 @@ export class VoiceActivityDetector {
     if (!this.active) return; // Skip processing if paused
     
     // Rest of the audio processing code...
+  }
+
+  setProcessing(processing: boolean) {
+    this.isProcessing = processing;
   }
 } 

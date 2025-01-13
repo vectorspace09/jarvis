@@ -48,6 +48,7 @@ export class ConversationManager extends EventEmitter implements ConversationMan
   private static readonly DEBOUNCE_TIME = 500; // ms
   private lastProcessingTime = 0;
   private metrics: SpeechMetrics;
+  private currentAudio: HTMLAudioElement | null = null;
 
   private constructor(config: Partial<VoiceConfig> = {}) {
     super()
@@ -156,50 +157,67 @@ export class ConversationManager extends EventEmitter implements ConversationMan
 
   private async resumeListening() {
     if (this.state.isAgentSpeaking) {
-      logger.info('Skipping resume - agent is speaking')
-      return
+      logger.info('Skipping resume - agent is speaking');
+      return;
     }
 
     try {
+      logger.info('Attempting to resume listening...');
+      
       if (!this.vad) {
+        logger.info('Initializing VAD...');
         this.vad = new VoiceActivityDetector({
           ...this.config,
-          silenceThreshold: 0.15, // Increase threshold
-          silenceTimeout: 1200,   // Longer silence timeout
-        })
-        await this.vad.init()
+          silenceThreshold: 0.15,
+          silenceTimeout: 1200,
+        });
+        await this.vad.init();
+        logger.info('VAD initialized successfully');
       }
 
       this.vad.start(
-        // Speech detected
         () => {
+          logger.info('Speech detected, starting recording...');
           if (!this.state.isProcessing && !this.state.isAgentSpeaking) {
-            this.startRecording()
+            this.startRecording();
           }
         },
-        // Speech ended
         () => {
+          logger.info('Speech ended, processing...');
           if (this.state.isRecording) {
             this.scheduleTimeout('stopRecording', () => {
-              this.stopRecordingAndProcess()
-            }, this.config.silenceTimeout)
+              this.stopRecordingAndProcess();
+            }, this.config.silenceTimeout);
           }
         }
-      )
+      );
+      
+      logger.info('Listening resumed successfully');
     } catch (error) {
-      this.handleError('Failed to resume listening', error)
+      this.handleError('Failed to resume listening', error);
     }
   }
 
   private startRecording() {
+    // Check for supported audio formats
+    const supportedMimeTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/wav'
+    ];
+    
+    const mimeType = supportedMimeTypes.find(type => MediaRecorder.isTypeSupported(type));
+    
+    if (!mimeType) {
+      this.handleError('No supported audio format found', new Error('Codec not supported'));
+      return;
+    }
+
     // Don't start if already recording or agent is speaking
     if (this.mediaRecorder || this.state.isProcessing || this.state.isAgentSpeaking) {
-      logger.info('Skipping recording start - conditions not met', {
-        hasRecorder: !!this.mediaRecorder,
-        isProcessing: this.state.isProcessing,
-        isAgentSpeaking: this.state.isAgentSpeaking
-      })
-      return
+      logger.info('Skipping recording start - conditions not met');
+      return;
     }
 
     navigator.mediaDevices.getUserMedia({
@@ -212,9 +230,9 @@ export class ConversationManager extends EventEmitter implements ConversationMan
       }
     }).then(stream => {
       this.mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus',
+        mimeType,
         audioBitsPerSecond: this.config.sampleRate
-      })
+      });
 
       this.audioChunks = []
       
@@ -240,66 +258,95 @@ export class ConversationManager extends EventEmitter implements ConversationMan
   }
 
   private stopRecordingAndProcess() {
-    if (!this.mediaRecorder || this.mediaRecorder.state !== 'recording') return
+    if (!this.mediaRecorder || this.mediaRecorder.state !== 'recording') return;
 
-    const currentRecorder = this.mediaRecorder
-    this.mediaRecorder = null
-
-    currentRecorder.stop()
-    currentRecorder.stream.getTracks().forEach(track => track.stop())
+    logger.info('Stopping recording and processing audio...');
     
-    const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' })
-    this.updateState({ isRecording: false })
+    const currentRecorder = this.mediaRecorder;
+    this.mediaRecorder = null;
+    
+    // Create a flag to prevent multiple processing
+    let isProcessing = false;
 
-    if (audioBlob.size >= this.config.minAudioSize) {
-      this.processAudio(audioBlob)
-    } else {
-      logger.info('Audio too short, skipping', { size: audioBlob.size })
-      if (this.state.isListening) {
-        this.resumeListening()
+    currentRecorder.addEventListener('dataavailable', async (event) => {
+      if (event.data.size > 0 && !isProcessing) {
+        isProcessing = true; // Set flag to prevent multiple processing
+        this.audioChunks.push(event.data);
+        const audioBlob = new Blob(this.audioChunks, { 
+          type: currentRecorder.mimeType || 'audio/webm' 
+        });
+        
+        this.updateState({ isRecording: false });
+
+        if (audioBlob.size >= this.config.minAudioSize) {
+          logger.info('Processing audio of size:', audioBlob.size);
+          await this.processAudio(audioBlob);
+        } else {
+          logger.info('Audio too short, skipping', { size: audioBlob.size });
+          if (this.state.isListening) {
+            this.resumeListening();
+          }
+        }
+        
+        // Clear chunks after processing
+        this.audioChunks = [];
       }
-    }
+    }, { once: true });
+
+    currentRecorder.stop();
+    currentRecorder.stream.getTracks().forEach(track => track.stop());
   }
 
   private async processAudio(audioBlob: Blob) {
-    const now = Date.now();
-    if (now - this.lastProcessingTime < ConversationManager.DEBOUNCE_TIME) {
-      return;
-    }
-    this.lastProcessingTime = now;
-
     try {
-      // Validate speech and track metrics
-      const validation = await SpeechValidator.validateAudio(audioBlob);
-      this.metrics.trackAttempt(validation);
-      
-      if (!validation.isValid) {
-        logger.info('Invalid speech detected', {
-          ...validation,
-          metrics: this.metrics.getReport()
-        });
-        return;
+      if (this.vad) {
+        this.vad.setProcessing(true);
       }
-
-      this.updateState({ isProcessing: true });
       
+      // Process audio through voice processor
       const result = await this.processor.processAudio(audioBlob);
-      
-      if (!this.validateTranscription(result.text)) {
-        this.metrics.trackAttempt({ isValid: false, confidence: 0 });
-        logger.info('Invalid transcription detected', { 
-          text: result.text,
-          metrics: this.metrics.getReport()
+      logger.info('Transcription received:', result);
+
+      if (result.text) {
+        const userMessage = {
+          role: 'user',
+          content: result.text,
+          language: result.detectedLanguage || 'en',
+          timestamp: new Date().toISOString()
+        };
+
+        // Process through chat API only once
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: [userMessage],
+            language: result.detectedLanguage || 'en'
+          })
         });
-        return;
+
+        if (!response.ok) {
+          throw new Error('Failed to get chat response');
+        }
+
+        const chatResponse = await response.json();
+        
+        // Only process the chat response
+        if (chatResponse.message?.content) {
+          logger.info('Chat response received:', chatResponse);
+          
+          // Process response through TTS
+          await this.processResponse(chatResponse.message.content);
+        }
       }
 
-      this.emit('message', result);
-      
     } catch (error) {
-      this.metrics.trackAttempt({ isValid: false, confidence: 0 });
-      this.handleError('Processing error', error);
+      logger.error('Processing error:', error);
+      this.handleError('Failed to process audio', error);
     } finally {
+      if (this.vad) {
+        this.vad.setProcessing(false);
+      }
       this.updateState({ isProcessing: false });
     }
   }
@@ -323,14 +370,34 @@ export class ConversationManager extends EventEmitter implements ConversationMan
     return normalized.length >= 2 && normalized.split(' ').length >= 1;
   }
 
-  private handleError(message: string, error: any) {
-    logger.error(message, error)
-    this.updateState({ error: message })
-    this.emit('error', { message, error })
-    this.cleanup()
+  private async handleError(message: string, error: any) {
+    logger.error(message, error);
+    
+    // Cleanup existing resources
+    this.cleanup();
+    
+    // Attempt to recover
+    if (this.state.isListening) {
+      try {
+        await this.resumeListening();
+      } catch (recoveryError) {
+        logger.error('Failed to recover from error:', recoveryError);
+        this.endConversation();
+      }
+    }
+    
+    this.updateState({ error: message });
+    this.emit('error', { message, error });
   }
 
   endConversation() {
+    // Stop any playing audio
+    if (this.currentAudio) {
+      this.currentAudio.pause();
+      this.currentAudio.remove();
+      this.currentAudio = null;
+    }
+    
     this.cleanup()
     this.updateState({
       isListening: false,
@@ -421,28 +488,64 @@ export class ConversationManager extends EventEmitter implements ConversationMan
 
   async processResponse(text: string) {
     try {
-      await this.startSpeaking()
-      // Process and play the response
+      if (this.state.isAgentSpeaking) {
+        logger.info('Already speaking, skipping response');
+        return;
+      }
+
+      await this.startSpeaking();
+
+      // Stop any current audio
+      if (this.currentAudio) {
+        this.currentAudio.pause();
+        this.currentAudio.remove();
+        this.currentAudio = null;
+      }
+
+      // Single TTS request
       const response = await fetch('/api/voice/synthesize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      })
+        body: JSON.stringify({ 
+          text,
+          language: 'en',
+          settings: {
+            voice: this.state.voice,
+            style: this.state.style,
+            emotion: this.state.emotion,
+            speed: this.state.speed,
+            pitch: this.state.pitch,
+            stability: this.state.stability,
+            clarity: this.state.clarity
+          }
+        })
+      });
 
-      if (response.ok) {
-        const audioBlob = await response.blob()
-        const audio = new Audio(URL.createObjectURL(audioBlob))
-        
-        // Wait for audio to finish before resuming listening
-        audio.onended = () => {
-          this.stopSpeaking()
-        }
-        
-        await audio.play()
+      if (!response.ok) {
+        throw new Error('Speech synthesis failed');
       }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      
+      this.currentAudio = new Audio(audioUrl);
+      
+      this.currentAudio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        if (this.currentAudio) {
+          this.currentAudio.remove();
+          this.currentAudio = null;
+        }
+        this.stopSpeaking();
+      };
+
+      logger.info('Starting audio playback');
+      await this.currentAudio.play();
+
     } catch (error) {
-      this.handleError('Speech synthesis error', error)
-      this.stopSpeaking()
+      logger.error('Response processing error:', error);
+      this.handleError('Failed to process response', error);
+      this.stopSpeaking();
     }
   }
 } 

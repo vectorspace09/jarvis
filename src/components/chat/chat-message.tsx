@@ -9,6 +9,12 @@ interface ChatMessageProps {
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === 'user'
 
+  // Add error boundary
+  if (!message || !message.content) {
+    console.error('Invalid message:', message)
+    return null
+  }
+
   return (
     <motion.div
       className={cn(

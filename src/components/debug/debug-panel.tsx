@@ -9,17 +9,44 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useLoggerStore } from '@/store/logger-store'
 import { useChatStore } from '@/store/chat-store'
 import { useVoiceStore } from '@/store/voice-store'
-import { Bug, Mic, Volume2, Maximize2, Minimize2, MessageSquare, Activity } from 'lucide-react'
+import { Bug, Mic, Volume2, Maximize2, Minimize2, MessageSquare, Activity, Copy, Check } from 'lucide-react'
 import { Button } from '../ui/button'
+import { toast } from 'react-hot-toast'
 
 type TabType = 'logs' | 'state' | 'audio' | 'debug'
 
 export function DebugPanel() {
   const [isExpanded, setIsExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>('logs')
+  const [isCopied, setIsCopied] = useState(false)
   const logs = useLoggerStore(state => state.logs)
   const chatState = useChatStore()
   const voiceState = useVoiceStore()
+
+  const copyDebugData = () => {
+    const debugData = {
+      timestamp: new Date().toISOString(),
+      chatState: {
+        messages: chatState.messages,
+        messageCount: chatState.messages.length,
+        context: chatState.context,
+        currentLanguage: chatState.currentLanguage
+      },
+      voiceState: {
+        isListening: voiceState.isListening,
+        isRecording: voiceState.isRecording,
+        isProcessing: voiceState.isProcessing,
+        isAgentSpeaking: voiceState.isAgentSpeaking,
+        error: voiceState.error
+      },
+      recentLogs: logs.slice(-20)
+    }
+
+    navigator.clipboard.writeText(JSON.stringify(debugData, null, 2))
+    setIsCopied(true)
+    toast.success('Debug data copied to clipboard')
+    setTimeout(() => setIsCopied(false), 2000)
+  }
 
   return (
     <motion.div 
@@ -36,6 +63,20 @@ export function DebugPanel() {
           <span className={`${!isExpanded && 'hidden'}`}>Debug Panel</span>
         </div>
         <div className="flex items-center gap-2">
+          {isExpanded && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={copyDebugData}
+              className="h-8 w-8"
+            >
+              {isCopied ? (
+                <Check className="h-4 w-4 text-green-500" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </Button>
+          )}
           <Button 
             variant="ghost" 
             size="icon"
@@ -135,9 +176,11 @@ export function DebugPanel() {
                     </h3>
                     <pre className="text-xs bg-muted p-2 rounded overflow-auto">
                       {JSON.stringify({
+                        messages: chatState.messages,
                         messageCount: chatState.messages.length,
                         lastMessage: chatState.messages[chatState.messages.length - 1]?.content,
-                        context: chatState.context
+                        context: chatState.context,
+                        currentLanguage: chatState.currentLanguage
                       }, null, 2)}
                     </pre>
                   </div>

@@ -1,22 +1,12 @@
 import { logger } from '@/store/logger-store'
-import { validateLanguage } from '@/lib/language-utils'
-
-interface TranscriptionResult {
-  text: string
-  detectedLanguage: string
-  confidence: number
-}
+import { TranscriptionResult } from '@/types/voice'
 
 export class VoiceProcessor {
   private static instance: VoiceProcessor
-  private processingQueue: Array<{
-    blob: Blob,
-    resolve: (result: TranscriptionResult) => void,
-    reject: (error: any) => void
-  }> = []
-  private isProcessing = false
-
-  static getInstance() {
+  
+  private constructor() {}
+  
+  static getInstance(): VoiceProcessor {
     if (!VoiceProcessor.instance) {
       VoiceProcessor.instance = new VoiceProcessor()
     }
@@ -24,53 +14,46 @@ export class VoiceProcessor {
   }
 
   async processAudio(audioBlob: Blob): Promise<TranscriptionResult> {
-    return new Promise((resolve, reject) => {
-      this.processingQueue.push({ blob: audioBlob, resolve, reject })
-      this.processNext()
-    })
-  }
-
-  private async processNext() {
-    if (this.isProcessing || this.processingQueue.length === 0) return
-
-    this.isProcessing = true
-    const { blob, resolve, reject } = this.processingQueue.shift()!
-
     try {
+      logger.info('Starting audio processing...', { 
+        size: audioBlob.size, 
+        type: audioBlob.type 
+      });
+
       const formData = new FormData()
-      formData.append('audio', blob)
+      formData.append('audio', audioBlob)
 
-      logger.info('Processing audio chunk', { size: blob.size })
-
-      const response = await fetch('/api/voice/transcribe', {
+      logger.info('Sending audio for transcription...');
+      const transcriptionResponse = await fetch('/api/voice/transcribe', {
         method: 'POST',
-        body: formData,
+        body: formData
       })
 
-      if (!response.ok) {
-        throw new Error('Transcription failed')
+      if (!transcriptionResponse.ok) {
+        const errorText = await transcriptionResponse.text();
+        logger.error('Transcription failed:', { 
+          status: transcriptionResponse.status,
+          error: errorText 
+        });
+        throw new Error(`Transcription failed: ${errorText}`);
       }
 
-      const rawResult = await response.json()
-      
-      // Validate and correct language detection
-      const validatedLanguage = validateLanguage(rawResult.text, rawResult.detectedLanguage)
-      
-      const result: TranscriptionResult = {
-        text: rawResult.text,
-        detectedLanguage: validatedLanguage,
-        confidence: rawResult.confidence ?? 1.0 // Default to 1.0 if not provided
+      const result = await transcriptionResponse.json();
+      logger.info('Transcription response:', result);
+
+      if (!result.text?.trim()) {
+        logger.warn('Empty transcription received');
+        throw new Error('Empty transcription');
       }
 
-      resolve(result)
+      return {
+        text: result.text,
+        detectedLanguage: result.detectedLanguage || 'en',
+        confidence: result.confidence || 0.9
+      }
     } catch (error) {
-      logger.error('Audio processing error:', error)
-      reject(error)
-    } finally {
-      this.isProcessing = false
-      this.processNext()
+      logger.error('Audio processing failed:', error);
+      throw error;
     }
   }
-}
-
-export type { TranscriptionResult } 
+} 

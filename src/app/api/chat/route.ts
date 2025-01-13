@@ -3,9 +3,16 @@ import OpenAI from 'openai'
 import { Message } from '@/types'
 import { logger } from '@/store/logger-store'
 import { SUPPORTED_LANGUAGES, LanguageCode } from '@/lib/language-utils'
+import { ChatCompletionMessageParam } from 'openai/resources/chat/completions' 
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
+})
+
+// Fix the message type
+const mapToOpenAIMessage = (msg: Message): ChatCompletionMessageParam => ({
+  role: msg.role as 'user' | 'assistant' | 'system',
+  content: msg.content
 })
 
 export async function POST(request: Request) {
@@ -13,10 +20,14 @@ export async function POST(request: Request) {
     logger.info('Chat request received')
     const { messages, language } = await request.json()
     
-    // Get conversation context from previous messages
-    const conversationContext = messages.slice(-3) // Last 3 messages for context
-    
-    const systemPrompt = {
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json(
+        { error: 'Invalid messages format' },
+        { status: 400 }
+      )
+    }
+
+    const systemPrompt: ChatCompletionMessageParam = {
       role: 'system',
       content: `You are Jarvis, a friendly and intelligent AI assistant. Keep these guidelines in mind:
 - Be conversational and natural, like a helpful friend
@@ -30,22 +41,22 @@ export async function POST(request: Request) {
 - Remember previous context in the conversation`
     }
 
+    logger.info('Sending to OpenAI:', { messages: messages })
+
     const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview", // Using GPT-4 for better conversation
+      model: "gpt-4-turbo-preview",
       messages: [
         systemPrompt,
-        ...conversationContext.map((msg: Message) => ({
-          role: msg.role,
-          content: msg.content
-        }))
+        ...messages.map(mapToOpenAIMessage)
       ],
       temperature: 0.7,
       max_tokens: 150,
-      presence_penalty: 0.6, // Encourage more varied responses
-      frequency_penalty: 0.5 // Discourage repetitive phrases
+      presence_penalty: 0.6,
+      frequency_penalty: 0.5
     })
 
     const reply = response.choices[0].message
+    logger.info('OpenAI response:', reply)
 
     const responseMessage = {
       role: 'assistant',
@@ -54,14 +65,12 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString()
     }
 
-    logger.info('Sending response:', responseMessage)
-
     return NextResponse.json({ message: responseMessage })
 
   } catch (error) {
     logger.error('Chat error:', error)
     return NextResponse.json(
-      { error: 'Failed to process chat' },
+      { error: 'Failed to process chat', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     )
   }

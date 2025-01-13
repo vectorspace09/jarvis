@@ -16,6 +16,7 @@ export function VoiceRecorder() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const setProcessing = useChatStore(state => state.setProcessing)
+  const addMessage = useChatStore(state => state.addMessage)
   const processMessageStream = useChatStore(state => state.processMessageStream)
   
   const handleInterrupt = useCallback(() => {
@@ -37,19 +38,40 @@ export function VoiceRecorder() {
 
     const handleMessage = async (result: any) => {
       if (result.text?.trim()) {
-        const message: Message = {
-          role: 'user',
-          content: result.text,
-          language: result.detectedLanguage,
-          timestamp: new Date().toISOString()
+        try {
+          // Create user message
+          const userMessage: Message = {
+            role: 'user',
+            content: result.text,
+            language: result.detectedLanguage,
+            timestamp: new Date().toISOString()
+          }
+          
+          logger.info('Processing user message:', userMessage)
+          
+          // Use processMessageStream to handle the entire flow
+          const response = await processMessageStream(userMessage)
+          
+          if (!response) {
+            throw new Error('Failed to get response from assistant')
+          }
+
+          logger.info('Successfully processed message:', {
+            userMessage,
+            assistantResponse: response
+          })
+
+        } catch (error) {
+          logger.error('Error in handleMessage:', error)
+          toast.error('Failed to process message')
         }
-        await processMessageStream(message)
       }
     }
 
     const handleError = (error: { message: string; error: any }) => {
-      setError(new Error(error.message));
-    };
+      setError(new Error(error.message))
+      toast.error(error.message)
+    }
 
     manager.on('stateChange', handleStateChange)
     manager.on('message', handleMessage)
@@ -63,18 +85,27 @@ export function VoiceRecorder() {
         manager.endConversation()
       }
     }
-  }, [])
+  }, [addMessage, processMessageStream, setProcessing])
 
   const toggleConversation = async () => {
     const manager = ConversationManager.getInstance()
     
     if (isListening) {
+      logger.info('Ending conversation...')
       manager.endConversation()
     } else {
+      logger.info('Starting conversation...')
       try {
+        // Test microphone access first
+        logger.info('Testing microphone access...')
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach(track => track.stop()) // Clean up test stream
+        
+        logger.info('Microphone access granted, starting conversation...')
         await manager.startConversation()
       } catch (error) {
-        toast.error('Unable to start conversation')
+        logger.error('Microphone access error:', error)
+        toast.error('Unable to access microphone')
       }
     }
   }
